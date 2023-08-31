@@ -16,7 +16,7 @@
 // The following components should usually be left as they are:
 (Registration "MultiResolutionRegistration")
 (Interpolator "BSplineInterpolator")
-(ResampleInterpolator "FinalBSplineInterpolator")
+(ResampleInterpolator "FinalNearestNeighborInterpolator")
 (Resampler "DefaultResampler")
 
 // These may be changed to Fixed/MovingSmoothingImagePyramid.
@@ -132,7 +132,7 @@
 // 1 gives worse accuracy (linear interpolation)
 // 0 gives worst accuracy, but is appropriate for binary images
 // (masks, segmentations); equivalent to nearest neighbor interpolation.
-(FinalBSplineInterpolationOrder 3)
+
 
 //Default pixel value for pixels that come from outside the picture:
 (DefaultPixelValue 0)

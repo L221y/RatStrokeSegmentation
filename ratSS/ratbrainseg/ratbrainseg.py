@@ -654,15 +654,15 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         
         # Paths to your reference images and parameter files
         reference_T2_volume_path = os.path.join(current, "data/threshold/2dseq_W4-04_T2H0.nii")
-        reference_brain_mask_path = os.path.join(current, "data/threshold/Segmentation_W4-04.nii.gz")
-        reference_hemisphere_mask_path = os.path.join(current, "data/threshold/HemisphereMask-W4-04.nii.gz")
+        #reference_brain_mask_path = os.path.join(current, "data/threshold/Segmentation_W4-04.nii.gz")
+        #reference_hemisphere_mask_path = os.path.join(current, "data/threshold/HemisphereMask-W4-04.nii.gz")
         parameter_file1 = os.path.join(current, "lib/doc/Par0020rigid.txt")
         parameter_file2 = os.path.join(current, "lib/doc/Par0020affine.txt")
 
         # Load reference volumes into Slicer
         reference_T2_node = slicer.util.loadVolume(reference_T2_volume_path)
-        reference_brain_mask_node = slicer.util.loadVolume(reference_brain_mask_path)
-        reference_hemisphere_mask_node = slicer.util.loadVolume(reference_hemisphere_mask_path)
+        #reference_brain_mask_node = slicer.util.loadVolume(reference_brain_mask_path)
+        #reference_hemisphere_mask_node = slicer.util.loadVolume(reference_hemisphere_mask_path)
 
         
         # Create and setup Elastix parameter node
@@ -676,16 +676,60 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
                                             fixedVolumeMaskNode=None, movingVolumeMaskNode=None,forceDisplacementFieldOutputTransform=False, 
                                                 initialTransformNode=None)
         
-        print("444",reference_brain_mask_node)
-        reference_brain_mask_node.SetAndObserveTransformNodeID(transformT2.GetID())
-        reference_brain_mask_node.HardenTransform()
-        reference_hemisphere_mask_node.SetAndObserveTransformNodeID(transformT2.GetID())
-        reference_hemisphere_mask_node.HardenTransform()
+        tempDirBase = self.elastixLogic.getTempDirectoryBase()
+        subfolders = [f.name for f in os.scandir(tempDirBase) if f.is_dir()]
+        sorted_subfolders = sorted(subfolders)
+        if sorted_subfolders:
+            last_subfolder = sorted_subfolders[-1]
+            tempDir = os.path.join(tempDirBase, last_subfolder)
+
+        #brain_mask_node = slicer.vtkMRMLScalarVolumeNode()
+
+        #hemisphere_mask_node = slicer.vtkMRMLScalarVolumeNode()
+        
+        # Transformix using cmd line
+        brain_mask_node = slicer.vtkMRMLScalarVolumeNode()
+        transformFileNameBase = os.path.join(tempDir,"result-transform/TransformParameters.1")
+        resultResampleDir = os.path.join(current,"data/tmp")
+        brainParamsTransformix = [
+        '-tp', f'{transformFileNameBase}.txt',
+        '-out', os.path.join(resultResampleDir,"brain"), 
+        '-in', os.path.join(current, "data/threshold/Segmentation_W4-04.mha"),
+        '-def','all'
+        ]
+        self.elastixLogic.startTransformix(brainParamsTransformix)
+        time.sleep(5)
+        self.elastixLogic._loadTransformedOutputVolume(brain_mask_node, os.path.join(resultResampleDir,"brain"))
+        del_list_brain = os.listdir(os.path.join(resultResampleDir,"brain"))
+        for f in del_list_brain:
+            file_path = os.path.join(os.path.join(resultResampleDir,"brain"), f)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        slicer.mrmlScene.AddNode(brain_mask_node)
+        brain_mask_node.SetName("Regi-mask")
+
+        hemisphere_mask_node = slicer.vtkMRMLScalarVolumeNode()
+        hemisphereParamsTransformix = [
+        '-tp', f'{transformFileNameBase}.txt',
+        '-out', os.path.join(resultResampleDir,"hemisphere"), 
+        '-in', os.path.join(current, "data/threshold/HemisphereMask-W4-04.mha"),
+        '-def','all'
+        ]
+        self.elastixLogic.startTransformix(hemisphereParamsTransformix)
+        time.sleep(5)
+        self.elastixLogic._loadTransformedOutputVolume(hemisphere_mask_node, os.path.join(resultResampleDir,"hemisphere"))
+        del_list_hemi = os.listdir(os.path.join(resultResampleDir,"brain"))
+        for f in del_list_hemi:
+            file_path = os.path.join(os.path.join(resultResampleDir,"brain"), f)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        slicer.mrmlScene.AddNode(hemisphere_mask_node)
+        hemisphere_mask_node.SetName("Regi-hemi")
 
 
         inputPWIImage = sitkUtils.PullVolumeFromSlicer(inputPWIVolumeNode)
-        brain_mask = sitkUtils.PullVolumeFromSlicer(reference_brain_mask_node)
-        hemisphere_mask = sitkUtils.PullVolumeFromSlicer(reference_hemisphere_mask_node)
+        brain_mask = sitkUtils.PullVolumeFromSlicer(brain_mask_node)
+        hemisphere_mask = sitkUtils.PullVolumeFromSlicer(hemisphere_mask_node)
         # # Your existing processing steps
         masked_volume_perf = MaskVolume(inputPWIImage, brain_mask)
         normalized_brain_perf = normalization_mean(masked_volume_perf, hemisphere_mask)
@@ -700,8 +744,10 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         sitkUtils.PushVolumeToSlicer(result_volume_perf, targetNode=outputPWISegNode)
         outputPWISegNode.SetName("PWISegmentation")
 
-        slicer.mrmlScene.RemoveNode(reference_brain_mask_node)
-        slicer.mrmlScene.RemoveNode(reference_hemisphere_mask_node)
+        slicer.mrmlScene.RemoveNode(reference_T2_node)
+        slicer.mrmlScene.RemoveNode(brain_mask_node)
+        slicer.mrmlScene.RemoveNode(hemisphere_mask_node)
+        #slicer.mrmlScene.RemoveNode(reference_hemisphere_mask_node)
 
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime - startTime:.2f} seconds')
@@ -726,7 +772,7 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
                                           parameterFilenames=parameterFilesname,outputVolumeNode=outputT2H24RegVolumeNode,outputTransformNode=transformT2H24,
                                             fixedVolumeMaskNode=None, movingVolumeMaskNode=None,forceDisplacementFieldOutputTransform=False, 
                                                 initialTransformNode=None)
-        
+
         outputT2H24RegVolumeNode.SetName("T2H24RegisteredVolume")
         #outputBefRegSegNode_cloned = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode')
         id = outputT2H24SegNode.GetID()
