@@ -734,9 +734,9 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         masked_volume_perf = MaskVolume(inputPWIImage, brain_mask)
         normalized_brain_perf = normalization_mean(masked_volume_perf, hemisphere_mask)
         
-        normalized_brain_perf_node = slicer.vtkMRMLScalarVolumeNode()
-        slicer.mrmlScene.AddNode(normalized_brain_perf_node)
-        normalized_brain_perf_node.SetName("normalizedPWI")
+        normalized_brain_perf = slicer.vtkMRMLScalarVolumeNode()
+        slicer.mrmlScene.AddNode(normalized_brain_perf)
+        normalized_brain_perf.SetName("normalizedPWI")
         
         result_volume_perf = MPC_segmentation_mediane(normalized_brain_perf, hemisphere_mask, float(threshold))
 
