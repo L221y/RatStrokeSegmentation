@@ -1,5 +1,7 @@
+from cProfile import label
 import logging
 import os
+from shutil import ExecError
 import warnings
 
 import vtk,qt,ctk
@@ -193,6 +195,29 @@ class ratbrainsegWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
             if firstVolumeNode:
                 self._parameterNode.SetNodeReferenceID("InputT2H0Volume", firstVolumeNode.GetID())
+        
+        if self._parameterNode.GetNodeReference("InputDWIVolume"):
+            if not self._parameterNode.GetNodeReference("InputDWIVolume").GetName().endswith("diff"):
+                for node in slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode"):
+                    if node.GetName().endswith("diff"):
+                        self._parameterNode.SetNodeReferenceID("InputDWIVolume", node.GetID())
+                        break
+
+        if self._parameterNode.GetNodeReference("InputPWIVolume"):
+            if not self._parameterNode.GetNodeReference("InputPWIVolume").GetName().endswith("perf"):
+                for node in slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode"):
+                    if node.GetName().endswith("perf"):
+                        self._parameterNode.SetNodeReferenceID("InputPWIVolume", node.GetID())
+                        break
+
+        if self._parameterNode.GetNodeReference("InputT2H24Volume"):
+            if not self._parameterNode.GetNodeReference("InputT2H24Volume").GetName().endswith("T2H24"):
+                for node in slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode"):
+                    if node.GetName().endswith("T2H24"):
+                        self._parameterNode.SetNodeReferenceID("InputT2H24Volume", node.GetID())
+                        break
+
+
 
     def setParameterNode(self, inputParameterNode):
         """
@@ -364,6 +389,7 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         import Elastix
         self.elastixLogic = Elastix.ElastixLogic()
         self.elastixLogic.deleteTemporaryFiles = False
+        self.segmentation = slicer.modules.segmentations.logic()
 
     def setDefaultParameters(self, parameterNode):
         """
@@ -438,7 +464,8 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         return nibabel
 
     def process_diff(self, inputDWIVolume, outputDWISeg, showResult=False):
-    
+        print("DWI segmentation start")
+        print("[--------------------------------------------------]0/100%")
         warnings.filterwarnings("ignore")
         #print(self.getElastixBinDir())
         import time
@@ -538,12 +565,30 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         sitkUtils.PushVolumeToSlicer(largest_component_binary_image,outputDWISeg)
         outputDWISeg.SetName("DWISegmentation")
 
+        orientedImage = slicer.vtkOrientedImageData()
+        labelmap = slicer.vtkMRMLLabelMapVolumeNode()
+        segmentationNode = slicer.vtkMRMLSegmentationNode()
+
+        orientedImage=self.segmentation.CreateOrientedImageDataFromVolumeNode(outputDWISeg)
+        self.segmentation.CreateLabelmapVolumeFromOrientedImageData(orientedImage,labelmap)
+
+        #slicer.mrmlScene.AddNode(labelmap)
+        slicer.mrmlScene.AddNode(segmentationNode)
+        self.segmentation.ImportLabelmapToSegmentationNode(labelmap, segmentationNode)
+        segmentationNode.SetName("Segmentation_DWI")
+
+
+        # segmentationDisplayNode = segmentationNode.GetDisplayNode()
+        # if not segmentationDisplayNode:
+        #     segmentationDisplayNode = segmentationNode.CreateDisplayNode()
+        print("DWI segmentation complete")
+        print("[+++++---------------------------------------------]10/100%")
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
 
     def process_t2h24(self, inputT2H24Volume, outputT2H24Seg, showResult=False):
         warnings.filterwarnings("ignore")
-        
+        print("T2H24 segmentation start")
         import time
         startTime = time.time()
         logging.info('T2H24 Processing started')
@@ -641,6 +686,8 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         sitkUtils.PushVolumeToSlicer(largest_component_binary_image,outputT2H24Seg)
         outputT2H24Seg.SetName("T2H24SegmentationBeforeRegistration")
 
+        print("[+++++++++++++-------------------------------------]25/100%")
+        print("T2H24 segmentation complete")
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
 
@@ -650,6 +697,7 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         #print(type(self.elastixLogic))
         #print(dir(self.elastixLogic))
         logging.info('PWI Processing started')
+        print("PWI segmentation start")
         current = os.path.split(os.path.realpath(__file__))[0]
         
         # Paths to your reference images and parameter files
@@ -682,7 +730,7 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         if sorted_subfolders:
             last_subfolder = sorted_subfolders[-1]
             tempDir = os.path.join(tempDirBase, last_subfolder)
-
+        print("[+++++++++++++++++++++++++-------------------------]50/100%")
         #brain_mask_node = slicer.vtkMRMLScalarVolumeNode()
 
         #hemisphere_mask_node = slicer.vtkMRMLScalarVolumeNode()
@@ -734,9 +782,11 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         masked_volume_perf = MaskVolume(inputPWIImage, brain_mask)
         normalized_brain_perf = normalization_mean(masked_volume_perf, hemisphere_mask)
         
-        normalized_brain_perf = slicer.vtkMRMLScalarVolumeNode()
-        slicer.mrmlScene.AddNode(normalized_brain_perf)
-        normalized_brain_perf.SetName("normalizedPWI")
+        normalized_brain_perf_node = slicer.vtkMRMLScalarVolumeNode()
+        slicer.mrmlScene.AddNode(normalized_brain_perf_node)
+        normalized_brain_perf_node.SetName("normalizedPWI")
+
+        
         
         result_volume_perf = MPC_segmentation_mediane(normalized_brain_perf, hemisphere_mask, float(threshold))
 
@@ -744,18 +794,34 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         sitkUtils.PushVolumeToSlicer(result_volume_perf, targetNode=outputPWISegNode)
         outputPWISegNode.SetName("PWISegmentation")
 
+        sitkUtils.PushVolumeToSlicer(normalized_brain_perf,targetNode=normalized_brain_perf_node)
+
         slicer.mrmlScene.RemoveNode(reference_T2_node)
         slicer.mrmlScene.RemoveNode(brain_mask_node)
         slicer.mrmlScene.RemoveNode(hemisphere_mask_node)
         #slicer.mrmlScene.RemoveNode(reference_hemisphere_mask_node)
 
+        orientedImage = slicer.vtkOrientedImageData()
+        labelmap = slicer.vtkMRMLLabelMapVolumeNode()
+        segmentationNode = slicer.vtkMRMLSegmentationNode()
+
+        orientedImage=self.segmentation.CreateOrientedImageDataFromVolumeNode(outputPWISegNode)
+        self.segmentation.CreateLabelmapVolumeFromOrientedImageData(orientedImage,labelmap)
+
+        #slicer.mrmlScene.AddNode(labelmap)
+        slicer.mrmlScene.AddNode(segmentationNode)
+        self.segmentation.ImportLabelmapToSegmentationNode(labelmap, segmentationNode)
+        segmentationNode.SetName("Segmentation_PWI")
+
+        print("[+++++++++++++++++++++++++++++++++++---------------]70/100%")
+        print("PWI segmentation complete")
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime - startTime:.2f} seconds')
 
     def process_register(self,inputT2H0VolumeNode, inputT2H24VolumeNode,outputBefRegSegNode,outputT2H24SegNode,outputT2H24RegVolumeNode,showResult=False):
         import time
         startTime = time.time()
-
+        print("T2H24 registration start")
         logging.info('T2H24 Processing started')
         current = os.path.split(os.path.realpath(__file__))[0]
         
@@ -778,13 +844,26 @@ class ratbrainsegLogic(ScriptedLoadableModuleLogic):
         id = outputT2H24SegNode.GetID()
         outputT2H24SegNode.Copy(outputBefRegSegNode)
         #outputT2H24SegNode.SetID(id)
-
+        print("[++++++++++++++++++++++++++++++++++++++++++++-----]90/100%")
 
         outputT2H24SegNode.SetAndObserveTransformNodeID(transformT2H24.GetID())
         outputT2H24SegNode.HardenTransform()
         outputT2H24SegNode.SetName("T2H24RegisteredSegmentation")
 
+        orientedImage = slicer.vtkOrientedImageData()
+        labelmap = slicer.vtkMRMLLabelMapVolumeNode()
+        segmentationNode = slicer.vtkMRMLSegmentationNode()
 
+        orientedImage=self.segmentation.CreateOrientedImageDataFromVolumeNode(outputT2H24SegNode)
+        self.segmentation.CreateLabelmapVolumeFromOrientedImageData(orientedImage,labelmap)
+
+        #slicer.mrmlScene.AddNode(labelmap)
+        slicer.mrmlScene.AddNode(segmentationNode)
+        self.segmentation.ImportLabelmapToSegmentationNode(labelmap, segmentationNode)
+        segmentationNode.SetName("Segmentation_T2H24")
+
+        print("[+++++++++++++++++++++++++++++++++++++++++++++++++]100/100%")
+        print("Complete")
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime - startTime:.2f} seconds')
 # #
